@@ -3,13 +3,15 @@
 /**
  * 두더지 게임 메인 페이지
  * 상태: idle(이름 입력) | playing(게임 중) | ended(결과/랭킹)
+ * 제한 시간 60초 기반
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { GameStart } from "@/components/GameStart";
 import { GameResult } from "@/components/GameResult";
 import { MoleGrid } from "@/components/MoleGrid";
-import { TOTAL_ROUNDS, RANKING_LIMIT } from "@/lib/game/constants";
+import { CountdownTimer } from "@/components/CountdownTimer";
+import { GAME_DURATION_MS, RANKING_LIMIT } from "@/lib/game/constants";
 import { calculatePoint } from "@/lib/game/scoring";
 import { saveScore, fetchRanking } from "@/lib/supabase/client";
 import type { ScoreRow } from "@/lib/supabase/types";
@@ -19,29 +21,30 @@ type GamePhase = "idle" | "playing" | "ended";
 export default function Home() {
   const [phase, setPhase] = useState<GamePhase>("idle");
   const [playerName, setPlayerName] = useState("");
-  const [roundIndex, setRoundIndex] = useState(0);
   const [totalScore, setTotalScore] = useState(0);
+  const [remainingMs, setRemainingMs] = useState(GAME_DURATION_MS);
+  const [moleKey, setMoleKey] = useState(0);
   const [ranking, setRanking] = useState<ScoreRow[]>([]);
   const [rankingError, setRankingError] = useState<string | null>(null);
   const [isLoadingRanking, setIsLoadingRanking] = useState(false);
   const [playerRank, setPlayerRank] = useState(0);
 
-  // ref로 최신 값 추적 → stale closure 방지
   const scoreRef = useRef(0);
-  const roundRef = useRef(0);
   const playerNameRef = useRef("");
-
-  const handleStart = useCallback((name: string) => {
-    setPlayerName(name);
-    playerNameRef.current = name;
-    setTotalScore(0);
-    scoreRef.current = 0;
-    setRoundIndex(0);
-    roundRef.current = 0;
-    setPhase("playing");
-  }, []);
+  const gameEndedRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const endTimeRef = useRef(0);
 
   const endGame = useCallback(async (finalScore: number) => {
+    if (gameEndedRef.current) return;
+    gameEndedRef.current = true;
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    setRemainingMs(0);
     setPhase("ended");
     setIsLoadingRanking(true);
     setRankingError(null);
@@ -63,44 +66,69 @@ export default function Home() {
     setPlayerRank(idx >= 0 ? idx + 1 : 0);
   }, []);
 
-  const advanceRound = useCallback(
-    (currentScore: number) => {
-      const nextRound = roundRef.current + 1;
-      roundRef.current = nextRound;
-      setRoundIndex(nextRound);
-      if (nextRound >= TOTAL_ROUNDS) {
-        endGame(currentScore);
+  const handleStart = useCallback((name: string) => {
+    setPlayerName(name);
+    playerNameRef.current = name;
+    setTotalScore(0);
+    scoreRef.current = 0;
+    setMoleKey(0);
+    gameEndedRef.current = false;
+    setRemainingMs(GAME_DURATION_MS);
+    endTimeRef.current = Date.now() + GAME_DURATION_MS;
+    setPhase("playing");
+  }, []);
+
+  // 카운트다운 타이머
+  useEffect(() => {
+    if (phase !== "playing") return;
+
+    timerRef.current = setInterval(() => {
+      const left = Math.max(0, endTimeRef.current - Date.now());
+      setRemainingMs(left);
+      if (left <= 0) {
+        endGame(scoreRef.current);
       }
-    },
-    [endGame]
-  );
+    }, 100);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [phase, endGame]);
+
+  const nextMole = useCallback(() => {
+    setMoleKey((prev) => prev + 1);
+  }, []);
 
   const handleHit = useCallback(
     (reactionTimeMs: number) => {
+      if (gameEndedRef.current) return;
       const point = calculatePoint(reactionTimeMs);
       const newTotal = scoreRef.current + point;
       scoreRef.current = newTotal;
       setTotalScore(newTotal);
-      advanceRound(newTotal);
+      nextMole();
     },
-    [advanceRound]
+    [nextMole]
   );
 
   const handleMiss = useCallback(() => {
-    advanceRound(scoreRef.current);
-  }, [advanceRound]);
+    if (gameEndedRef.current) return;
+    nextMole();
+  }, [nextMole]);
 
   const handlePlayAgain = useCallback(() => {
     setPhase("idle");
-    setRoundIndex(0);
-    roundRef.current = 0;
     setTotalScore(0);
     scoreRef.current = 0;
+    setMoleKey(0);
     setRanking([]);
     setPlayerRank(0);
+    setRemainingMs(GAME_DURATION_MS);
+    gameEndedRef.current = false;
   }, []);
-
-  const displayRound = Math.min(roundIndex + 1, TOTAL_ROUNDS);
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center py-8 px-4">
@@ -108,17 +136,16 @@ export default function Home() {
 
       {phase === "playing" && (
         <div className="flex flex-col items-center gap-6">
-          <div className="flex w-full max-w-sm items-center justify-between rounded-xl bg-[var(--mole-surface)]/10 px-4 py-2 text-[var(--mole-text)]">
-            <span className="font-medium">{playerName}</span>
-            <span className="tabular-nums font-bold">
-              {displayRound} / {TOTAL_ROUNDS} · {totalScore}점
-            </span>
+          <div className="flex w-full max-w-md items-center justify-between rounded-xl bg-[var(--mole-surface)]/10 px-5 py-3 text-[var(--mole-text)]">
+            <span className="text-lg font-medium">{playerName}</span>
+            <CountdownTimer remainingMs={remainingMs} size={90} />
+            <span className="tabular-nums text-2xl font-bold">{totalScore}점</span>
           </div>
           <MoleGrid
-            roundIndex={roundIndex}
+            roundIndex={moleKey}
             onHit={handleHit}
             onMiss={handleMiss}
-            isActive={phase === "playing" && roundIndex < TOTAL_ROUNDS}
+            isActive={phase === "playing" && !gameEndedRef.current}
           />
         </div>
       )}
