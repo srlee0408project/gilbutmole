@@ -1,8 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #2d5a27;
+  --foreground: #f5deb3;
+  /* 두더지 테마: 흙/잔디 */
+  --mole-bg-start: #1e3d1a;
+  --mole-bg-end: #2d5a27;
+  --mole-hole: #2c1810;
+  --mole-hole-border: #3d2316;
+  --mole-surface: #f5deb3;
+  --mole-text: #f5deb3;
+  --mole-text-muted: #d4b896;
+  --mole-accent: #8b4513;
+  --mole-accent-hover: #a0522d;
+  --mole-face: #6b4423;
+  --mole-face-border: #5a3a1e;
+  --mole-cheek: #8b5e3c;
+  --mole-eye: #1a1a1a;
+  --mole-eye-white: #f5deb3;
+  --mole-nose: #4a2c14;
+  --mole-nose-shine: #5a3a1e;
 }
 
 @theme inline {
@@ -10,17 +27,17 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-display: var(--font-fredoka);
 }
 
 body {
-  background: var(--background);
+  background: linear-gradient(180deg, var(--mole-bg-start) 0%, var(--mole-bg-end) 100%);
+  background-attachment: fixed;
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+.font-display {
+  font-family: var(--font-fredoka), var(--font-geist-sans), system-ui, sans-serif;
 }

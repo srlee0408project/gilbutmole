@@ -1,65 +1,139 @@
-import Image from "next/image";
+"use client";
+
+/**
+ * 두더지 게임 메인 페이지
+ * 상태: idle(이름 입력) | playing(게임 중) | ended(결과/랭킹)
+ */
+
+import { useCallback, useRef, useState } from "react";
+import { GameStart } from "@/components/GameStart";
+import { GameResult } from "@/components/GameResult";
+import { MoleGrid } from "@/components/MoleGrid";
+import { TOTAL_ROUNDS, RANKING_LIMIT } from "@/lib/game/constants";
+import { calculatePoint } from "@/lib/game/scoring";
+import { saveScore, fetchRanking } from "@/lib/supabase/client";
+import type { ScoreRow } from "@/lib/supabase/types";
+
+type GamePhase = "idle" | "playing" | "ended";
 
 export default function Home() {
+  const [phase, setPhase] = useState<GamePhase>("idle");
+  const [playerName, setPlayerName] = useState("");
+  const [roundIndex, setRoundIndex] = useState(0);
+  const [totalScore, setTotalScore] = useState(0);
+  const [ranking, setRanking] = useState<ScoreRow[]>([]);
+  const [rankingError, setRankingError] = useState<string | null>(null);
+  const [isLoadingRanking, setIsLoadingRanking] = useState(false);
+  const [playerRank, setPlayerRank] = useState(0);
+
+  // ref로 최신 값 추적 → stale closure 방지
+  const scoreRef = useRef(0);
+  const roundRef = useRef(0);
+  const playerNameRef = useRef("");
+
+  const handleStart = useCallback((name: string) => {
+    setPlayerName(name);
+    playerNameRef.current = name;
+    setTotalScore(0);
+    scoreRef.current = 0;
+    setRoundIndex(0);
+    roundRef.current = 0;
+    setPhase("playing");
+  }, []);
+
+  const endGame = useCallback(async (finalScore: number) => {
+    setPhase("ended");
+    setIsLoadingRanking(true);
+    setRankingError(null);
+
+    await saveScore({ player_name: playerNameRef.current, total_score: finalScore });
+
+    const { data: rankingData, error } = await fetchRanking(RANKING_LIMIT);
+    setIsLoadingRanking(false);
+    if (error) {
+      setRankingError(error.message);
+      setRanking([]);
+      setPlayerRank(0);
+      return;
+    }
+    setRanking(rankingData);
+    const idx = rankingData.findIndex(
+      (r) => r.player_name === playerNameRef.current && r.total_score === finalScore
+    );
+    setPlayerRank(idx >= 0 ? idx + 1 : 0);
+  }, []);
+
+  const advanceRound = useCallback(
+    (currentScore: number) => {
+      const nextRound = roundRef.current + 1;
+      roundRef.current = nextRound;
+      setRoundIndex(nextRound);
+      if (nextRound >= TOTAL_ROUNDS) {
+        endGame(currentScore);
+      }
+    },
+    [endGame]
+  );
+
+  const handleHit = useCallback(
+    (reactionTimeMs: number) => {
+      const point = calculatePoint(reactionTimeMs);
+      const newTotal = scoreRef.current + point;
+      scoreRef.current = newTotal;
+      setTotalScore(newTotal);
+      advanceRound(newTotal);
+    },
+    [advanceRound]
+  );
+
+  const handleMiss = useCallback(() => {
+    advanceRound(scoreRef.current);
+  }, [advanceRound]);
+
+  const handlePlayAgain = useCallback(() => {
+    setPhase("idle");
+    setRoundIndex(0);
+    roundRef.current = 0;
+    setTotalScore(0);
+    scoreRef.current = 0;
+    setRanking([]);
+    setPlayerRank(0);
+  }, []);
+
+  const displayRound = Math.min(roundIndex + 1, TOTAL_ROUNDS);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="flex min-h-screen flex-col items-center justify-center py-8 px-4">
+      {phase === "idle" && <GameStart onStart={handleStart} />}
+
+      {phase === "playing" && (
+        <div className="flex flex-col items-center gap-6">
+          <div className="flex w-full max-w-sm items-center justify-between rounded-xl bg-[var(--mole-surface)]/10 px-4 py-2 text-[var(--mole-text)]">
+            <span className="font-medium">{playerName}</span>
+            <span className="tabular-nums font-bold">
+              {displayRound} / {TOTAL_ROUNDS} · {totalScore}점
+            </span>
+          </div>
+          <MoleGrid
+            roundIndex={roundIndex}
+            onHit={handleHit}
+            onMiss={handleMiss}
+            isActive={phase === "playing" && roundIndex < TOTAL_ROUNDS}
+          />
+        </div>
+      )}
+
+      {phase === "ended" && (
+        <GameResult
+          playerName={playerName}
+          totalScore={totalScore}
+          ranking={ranking}
+          playerRank={playerRank}
+          onPlayAgain={handlePlayAgain}
+          isLoading={isLoadingRanking}
+          error={rankingError}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      )}
+    </main>
   );
 }
