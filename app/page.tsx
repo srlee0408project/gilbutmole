@@ -3,7 +3,7 @@
 /**
  * 두더지 게임 메인 페이지
  * 상태: idle(이름 입력) | playing(게임 중) | ended(결과/랭킹)
- * 제한 시간 60초 기반
+ * 제한 시간 30초, 3000점 이상 시 난이도 상승 (가짜 두더지 등장)
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,7 +11,7 @@ import { GameStart } from "@/components/GameStart";
 import { GameResult } from "@/components/GameResult";
 import { MoleGrid } from "@/components/MoleGrid";
 import { CountdownTimer } from "@/components/CountdownTimer";
-import { GAME_DURATION_MS, RANKING_LIMIT } from "@/lib/game/constants";
+import { GAME_DURATION_MS, RANKING_LIMIT, DIFFICULTY_THRESHOLD, FAKE_MOLE_PENALTY } from "@/lib/game/constants";
 import { calculatePoint } from "@/lib/game/scoring";
 import { saveScore, fetchRanking } from "@/lib/supabase/client";
 import type { ScoreRow } from "@/lib/supabase/types";
@@ -28,10 +28,13 @@ export default function Home() {
   const [rankingError, setRankingError] = useState<string | null>(null);
   const [isLoadingRanking, setIsLoadingRanking] = useState(false);
   const [playerRank, setPlayerRank] = useState(0);
+  const [isHardMode, setIsHardMode] = useState(false);
+  const [showDifficultyWarning, setShowDifficultyWarning] = useState(false);
 
   const scoreRef = useRef(0);
   const playerNameRef = useRef("");
   const gameEndedRef = useRef(false);
+  const hardModeTriggeredRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const endTimeRef = useRef(0);
 
@@ -73,6 +76,9 @@ export default function Home() {
     scoreRef.current = 0;
     setMoleKey(0);
     gameEndedRef.current = false;
+    hardModeTriggeredRef.current = false;
+    setIsHardMode(false);
+    setShowDifficultyWarning(false);
     setRemainingMs(GAME_DURATION_MS);
     endTimeRef.current = Date.now() + GAME_DURATION_MS;
     setPhase("playing");
@@ -102,6 +108,19 @@ export default function Home() {
     setMoleKey((prev) => prev + 1);
   }, []);
 
+  // 난이도 상승 체크
+  const checkDifficulty = useCallback((score: number) => {
+    if (!hardModeTriggeredRef.current && score >= DIFFICULTY_THRESHOLD) {
+      hardModeTriggeredRef.current = true;
+      setShowDifficultyWarning(true);
+      // 2초간 경고 표시 후 하드모드 시작
+      setTimeout(() => {
+        setShowDifficultyWarning(false);
+        setIsHardMode(true);
+      }, 2000);
+    }
+  }, []);
+
   const handleHit = useCallback(
     (reactionTimeMs: number) => {
       if (gameEndedRef.current) return;
@@ -109,10 +128,19 @@ export default function Home() {
       const newTotal = scoreRef.current + point;
       scoreRef.current = newTotal;
       setTotalScore(newTotal);
+      checkDifficulty(newTotal);
       nextMole();
     },
-    [nextMole]
+    [nextMole, checkDifficulty]
   );
+
+  const handleFakeHit = useCallback(() => {
+    if (gameEndedRef.current) return;
+    const newTotal = Math.max(0, scoreRef.current - FAKE_MOLE_PENALTY);
+    scoreRef.current = newTotal;
+    setTotalScore(newTotal);
+    nextMole();
+  }, [nextMole]);
 
   const handleMiss = useCallback(() => {
     if (gameEndedRef.current) return;
@@ -127,6 +155,9 @@ export default function Home() {
     setRanking([]);
     setPlayerRank(0);
     setRemainingMs(GAME_DURATION_MS);
+    setIsHardMode(false);
+    setShowDifficultyWarning(false);
+    hardModeTriggeredRef.current = false;
     gameEndedRef.current = false;
   }, []);
 
@@ -135,17 +166,44 @@ export default function Home() {
       {phase === "idle" && <GameStart onStart={handleStart} />}
 
       {phase === "playing" && (
-        <div className="flex flex-col items-center gap-6">
+        <div className="relative flex flex-col items-center gap-6">
+          {/* 난이도 상승 경고 오버레이 */}
+          {showDifficultyWarning && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-black/70">
+              <div className="flex flex-col items-center gap-3 px-6 py-8 text-center">
+                <span className="text-4xl">⚠️</span>
+                <p className="text-xl font-bold text-yellow-400">난이도 상승!</p>
+                <p className="text-sm text-yellow-200">
+                  보라색 두더지가 등장합니다!
+                </p>
+                <p className="text-sm text-red-400 font-semibold">
+                  보라색 두더지를 잡으면 {FAKE_MOLE_PENALTY}점 감점!
+                </p>
+                <p className="text-sm text-green-400">
+                  갈색 두더지만 잡으세요!
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex w-full max-w-md items-center justify-between rounded-xl bg-[var(--mole-surface)]/10 px-5 py-3 text-[var(--mole-text)]">
             <span className="text-lg font-medium">{playerName}</span>
             <CountdownTimer remainingMs={remainingMs} size={90} />
             <span className="tabular-nums text-2xl font-bold">{totalScore}점</span>
           </div>
+          {isHardMode && (
+            <div className="flex items-center gap-2 rounded-lg bg-purple-900/40 px-3 py-1 text-sm text-purple-300">
+              <span>⚡</span>
+              <span>하드 모드 — 보라색 두더지 주의!</span>
+            </div>
+          )}
           <MoleGrid
             roundIndex={moleKey}
             onHit={handleHit}
             onMiss={handleMiss}
-            isActive={phase === "playing" && !gameEndedRef.current}
+            onFakeHit={handleFakeHit}
+            isActive={phase === "playing" && !gameEndedRef.current && !showDifficultyWarning}
+            isHardMode={isHardMode}
           />
         </div>
       )}
